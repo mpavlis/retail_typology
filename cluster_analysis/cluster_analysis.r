@@ -9,6 +9,8 @@ library(mclust)
 library(ggsci)
 library(car)
 
+source("~/Dropbox/git/retail_typology/clustergram.r")
+
 options(max.print = 3600)
 
 ###################################################################################################################
