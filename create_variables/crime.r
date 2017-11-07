@@ -27,18 +27,18 @@ for (m in 1:12){
 }
 
 csvs <- list.files("~/temp")
-con <- dbConnect(PostgreSQL(), dbname = "crime", user = "postgres", password = "pwd")
+con <- dbConnect(PostgreSQL(), dbname = "crime", user = "user", password = "pwd")
 dbExecute(con, "CREATE TABLE crime(crime_id TEXT,	month TEXT,	reported_by TEXT,	falls_within TEXT, longitude NUMERIC,
                 latitude NUMERIC,	location TEXT, lsoa_code TEXT,	lsoa_name TEXT,	crime_type TEXT, last_outcome_category TEXT, context TEXT)")
 for (csv in csvs){
-  system(paste0("psql -U postgres -c \"copy crime FROM '/home/michalis/temp/", csv, "' CSV HEADER\" crime"))
+  system(paste0("psql -U postgres -c \"copy crime FROM '~/temp/", csv, "' CSV HEADER\" crime"))
 }
 
 dbExecute(con, "ALTER TABLE crime ADD COLUMN geog geography(POINT,4326)")
 dbExecute(con, "UPDATE crime SET geog = ST_GeogFromText('SRID=4326;POINT(' || longitude || ' ' || latitude || ')')")
 dbExecute(con, "CREATE INDEX ON crime USING gist(geog)")
 dbExecute(con, "CREATE INDEX ON crime(crime_type)")
-# import_or_append(con = con, working_dirs = "/home/shishou/Dropbox/liverpool/GIS_Data/LADs_2011", shp_names = "Local_UnitaryAuthority.shp", srid = 27700, table_name = "lads")
+# import_or_append(con = con, working_dirs = "~/Dropbox/liverpool/GIS_Data/LADs_2011", shp_names = "Local_UnitaryAuthority.shp", srid = 27700, table_name = "lads")
 import_or_append(con = con, working_dirs = "/home/michalis/Dropbox/liverpool/GIS_Data/OAs_2011", shp_names = "oas11.shp", srid = 27700, table_name = "oas")
 dbExecute(con, "create index on oas(code)")
 
