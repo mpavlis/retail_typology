@@ -17,7 +17,7 @@ options(max.print = 3600)
 ##### 1. z-standardise ########################################################################################################################################
 
 fun_std <- function(x){
-  (x - min(x)) / (max(x) - min(x))
+  ifelse(max(x) - min(x) != 0, (x - min(x)) / (max(x) - min(x)), 0)
 } 
 
 ##### 2. Create a plot of the centrality measure of each explanatory variable conditional on cluster level ####################################################
@@ -60,38 +60,42 @@ get_clustergram <- function(Df, z_std = T, which_many = c("many_kmeans", "many_p
 
 ##### 4. Cluster analysis with stats ##########################################################################################################################
 
-get_ca <- function(k, vars_df = clustergram_list[[1]], id = all_data$cluster_id, cl_boundaries = boundaries, out_plots_dir = "plots"){
+get_ca <- function(k, vars_df, id, cl_boundaries, out_data_dir, out_plots_dir){
   
   set.seed(1234)
   m_pam <- pam(x = vars_df, k = k, diss = F, metric = "euclidean", stand = F)
-  tiff(paste0(out_plots_dir, "/cluster_analysis_", k, ".tiff"), width = 1600, height = 1600, compression = "none")
-  plot(m_pam, which.plots = 1)
-  dev.off()
+  tryCatch({
+    tiff(paste0(out_plots_dir, "/cluster_analysis_", k, ".tiff"), width = 1600, height = 1600, compression = "none")
+    plot(m_pam, which.plots = 1)
+    dev.off()
+  }, error = function(err){
+    error_file <- file(paste0(out_plots_dir, "/error_received_k_", k, ".txt"), "w")
+    cat("The following error was received:", err$message, file = error_file, sep = "\n")
+    close(error_file)
+    }
+  )
   
-  clusters <- data.frame(id = id, pam = m_pam$clustering, stringsAsFactors = F)
+  vars_df$pam <- m_pam$clustering
   
-  cl_boundaries <- inner_join(cl_boundaries, clusters, by = "id")
-  vars_df <- as.data.table(vars_df)
-  vars_df[, id := id]
-  cl_boundaries <- inner_join(cl_boundaries, vars_df)
-  st_write(cl_boundaries, paste0("boundaries_pam", k, ".gpkg"))
-  
-  ggp <- centrality_per_level(Df = as.data.frame(cl_boundaries)[,-which(names(cl_boundaries) %in% c("id","name", "geom"))], 
-                              id_vars = "pam",fun_central = median, out_csv_name = paste0("medians_pam", k, ".csv"))
+  ggp <- centrality_per_level(Df = vars_df, id_vars = "pam",fun_central = median, out_csv_name = paste0(out_data_dir, "/medians_pam", k, ".csv"))
   ggsave(paste0(out_plots_dir, "/medians_pam", k, ".tiff"), ggp, width = 297, height = 210, units = "mm")
   
-  setDT(clusters)
-  clusters <- clusters[vars_df, on="id"]
+  vars_df$id <- id
   
-  sum_per_cluster <- clusters[, lapply(.SD, sum), keyby = "pam", .SDcols = 3:ncol(clusters)]
-  sum_total <- clusters[, lapply(.SD, sum), .SDcols = 3:ncol(clusters)]
+  cl_boundaries <- inner_join(cl_boundaries, vars_df, by = "id")
+  st_write(cl_boundaries, paste0(out_data_dir, "/boundaries_pam", k, ".gpkg"))
+  
+  vars_df <- as.data.table(vars_df)
+  
+  sum_per_cluster <- vars_df[, lapply(.SD, sum), keyby = "pam", .SDcols = 1:(ncol(vars_df)-2)]
+  sum_total <- vars_df[, lapply(.SD, sum), .SDcols = 1:(ncol(vars_df)-2)]
   
   index_scores <- data.table(pam = 1:k)
   for (n in names(sum_per_cluster)[2:ncol(sum_per_cluster)]){
     set(index_scores, j = n, value = round(100*sum_per_cluster[[n]] / sum_total[[n]]))
   }
   
-  fwrite(index_scores, paste0("index_score_pam", k, ".csv"))
+  fwrite(index_scores, paste0(out_data_dir, "/index_score_pam", k, ".csv"))
 }
 
 ############################################################# Statistical Analysis #####################################################################
@@ -169,13 +173,39 @@ ggsave("plots/clustergram.tiff", plot(clustergram_list[[2]]), width = 297, heigh
 ##### 6. PAM cluster analysis ##########################################################################################################################
 
 # set.seed(1234)
-for (k in 4:9) get_ca(k)
+for (k in 4:9) get_ca(k, vars_df = clustergram_list[[1]], id = all_data$cluster_id, cl_boundaries = boundaries, out_data_dir = getwd(), out_plots_dir = "plots")
 
 # m_pam2 <- pam(x = data_sele_trans_std2, k = 6, diss = F, metric = "euclidean", stand = F)
-# m_pam2_b <- pam(x = data_sele_trans_std2, k = 5, diss = F, metric = "euclidean", stand = F)
-# m_pam3 <- pam(x = data_sele_trans_std3, k = 6, diss = F, metric = "euclidean", stand = F)
-# m_pam3_b <- pam(x = data_sele_trans_std3, k = 5, diss = F, metric = "euclidean", stand = F)
 
+##### 7. Second tier ###################################################################################################################################
+
+# We selected 5 clusters, create the second tier
+
+first_tier <- st_read("boundaries_pam5.gpkg", stringsAsFactors = F)
+first_tier[first_tier$id %in% c("RC0167", "RC0312", "RC0379", "RC0026", "RC0456"),]$pam <- 2
+
+dir.create("second_tier")
+setwd("second_tier")
+for (cl in 1:5){
+  out_dir <- paste0("tier_of_cluster_", cl)
+  out_plots_dir <- paste0(out_dir, "/plots")
+  dir.create(out_dir)
+  dir.create(out_plots_dir)
+  subset_typology <- first_tier[first_tier$pam == cl, ]
+  vars_only <- as.data.frame(subset_typology)[,4:51]
+  tryCatch(
+    {clustergram_list <- get_clustergram(Df = vars_only, z_std = F, which_many = "many_pam", k_vec = 2:5)
+      ggsave(paste0(out_plots_dir, "/clustergram_",cl, ".tiff"), plot(clustergram_list[[2]]), width = 297, height = 210, units = "mm")
+      for (k in 2:5){
+        get_ca(k = k, vars_df = vars_only, id = subset_typology$id, cl_boundaries = subset_typology[, c("id", "name", "geom")], out_data_dir = out_dir, out_plots_dir = out_plots_dir)
+      }
+    }, error = function(err){
+      error_file <- file(paste0(out_dir, "/error_received.txt"), "w")
+      cat("The following error was received:", err$message, file = error_file, sep = "\n")
+      close(error_file)
+      }
+    )
+}
 
 ##### 7. mclust ########################################################################################################################################
 
